@@ -59,6 +59,9 @@ class RuntimeConfig:
     use_profiler: bool = False
     use_torch_compile: bool = False
     use_onediff: bool = False
+    token_mask: str = "Height"
+    kv_mask: str = "Random"
+    kv_max: int = 4096
 
     def __post_init__(self):
         check_packages()

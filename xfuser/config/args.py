@@ -106,6 +106,10 @@ class xFuserArgs:
     coco_path: Optional[str] = None
     use_cache: bool = False
 
+    token_mask: str = "Height"
+    kv_mask: str = "Random"
+    kv_max: int = 4096
+
     @staticmethod
     def add_cli_args(parser: FlexibleArgumentParser):
         """Shared CLI arguments for xFuser engine."""
@@ -146,6 +150,24 @@ class xFuserArgs:
             "--use_onediff",
             action="store_true",
             help="Enable onediff to accelerate inference in a single card",
+        )
+        runtime_group.add_argument(
+            "--kv_mask",
+            type=str,
+            default="Random",
+            help="The type of kv mask to use",
+        )
+        runtime_group.add_argument(
+            "--token_mask",
+            type=str,
+            default="Height",
+            help="The type of token mask to use",
+        )
+        runtime_group.add_argument(
+            "--kv_max",
+            type=int,
+            default=4096,
+            help="Max units of KV can be used in calculation"
         )
 
         # Parallel arguments
@@ -335,6 +357,9 @@ class xFuserArgs:
             use_torch_compile=self.use_torch_compile,
             use_onediff=self.use_onediff,
             # use_profiler=self.use_profiler,
+            token_mask=self.token_mask,
+            kv_mask=self.kv_mask,
+            kv_max=self.kv_max,
         )
 
         parallel_config = ParallelConfig(

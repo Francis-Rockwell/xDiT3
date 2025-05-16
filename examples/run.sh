@@ -2,35 +2,10 @@ set -x
 
 export PYTHONPATH=$PWD:$PYTHONPATH
 
-# Select the model type
-export MODEL_TYPE="Sd3"
-# Configuration for different model types
-# script, model_id, inference_step
-declare -A MODEL_CONFIGS=(
-    ["Pixart-alpha"]="pixartalpha_example.py /cfs/dit/PixArt-XL-2-1024-MS 20"
-    ["Pixart-sigma"]="pixartsigma_example.py /cfs/dit/PixArt-Sigma-XL-2-2K-MS 20"
-    ["Sd3"]="sd3_example.py /archive/share/cql/model/stable-diffusion-3-medium-diffusers 20"
-    ["Flux"]="flux_example.py /archive/share/cql/model/FLUX.1-dev 28"
-    ["HunyuanDiT"]="hunyuandit_example.py /cfs/dit/HunyuanDiT-v1.2-Diffusers 50"
-)
-
-if [[ -v MODEL_CONFIGS[$MODEL_TYPE] ]]; then
-    IFS=' ' read -r SCRIPT MODEL_ID INFERENCE_STEP <<< "${MODEL_CONFIGS[$MODEL_TYPE]}"
-    export SCRIPT MODEL_ID INFERENCE_STEP
-else
-    echo "Invalid MODEL_TYPE: $MODEL_TYPE"
-    exit 1
-fi
-
 mkdir -p ./results
 
 # task args
 TASK_ARGS="--height 1024 --width 1024 --no_use_resolution_binning"
-
-
-# On 8 gpus, pp=2, ulysses=2, ring=1, cfg_parallel=2 (split batch)
-N_GPUS=4
-PARALLEL_ARGS="--pipefusion_parallel_degree 2 --ulysses_degree 1 --ring_degree 2"
 
 # CFG_ARGS="--use_cfg_parallel"
 
@@ -45,18 +20,19 @@ PARALLEL_ARGS="--pipefusion_parallel_degree 2 --ulysses_degree 1 --ring_degree 2
 # Another compile option is `--use_onediff` which will use onediff's compiler.
 # COMPILE_FLAG="--use_torch_compile"
 
-
-# export CUDA_VISIBLE_DEVICES=4,5,6,7
-
 torchrun --nproc_per_node=$N_GPUS ./examples/$SCRIPT \
 --model $MODEL_ID \
 $PARALLEL_ARGS \
 $TASK_ARGS \
 $PIPEFUSION_ARGS \
 $OUTPUT_ARGS \
---num_inference_steps $INFERENCE_STEP \
---warmup_steps 1 \
---prompt "brown dog laying on the ground with a metal bowl in front of him." \
+$INFERENCE_STEP \
+--prompt "A person is flying a kite on the lawn, and a large bird flies across the sky." \
 $CFG_ARGS \
 $PARALLLEL_VAE \
-$COMPILE_FLAG
+$COMPILE_FLAG \
+$WARMUP_STEP \
+$KV_MAX \
+$TOKEN_MASK \
+$KV_MASK \
+$ITERATION \
