@@ -1,5 +1,8 @@
 from typing import List
-
+import numpy as np
+from sklearn.cluster import KMeans
+from scipy.spatial.distance import cdist
+import matplotlib.pyplot as plt
 
 def generate_masked_orthogonal_rank_groups(
     world_size: int, parallel_size: List[int], mask: List[bool]
@@ -85,11 +88,11 @@ def generate_masked_orthogonal_rank_groups(
         return idx
 
     masked_shape = [s for s, m in zip(parallel_size, mask) if m]
-    unmasked_shape = [s for s, m in zip(parallel_size, mask) if not m]
+    premask_shape = [s for s, m in zip(parallel_size, mask) if not m]
 
     global_stride = prefix_product(parallel_size)
     masked_stride = [d for d, m in zip(global_stride, mask) if m]
-    unmasked_stride = [d for d, m in zip(global_stride, mask) if not m]
+    premask_stride = [d for d, m in zip(global_stride, mask) if not m]
 
     group_size = prefix_product(masked_shape)[-1]
     num_of_group = world_size // group_size
@@ -97,14 +100,14 @@ def generate_masked_orthogonal_rank_groups(
     ranks = []
     for group_index in range(num_of_group):
         # get indices from unmaksed for group_index.
-        decomposed_group_idx = decompose(group_index, unmasked_shape)
+        decomposed_group_idx = decompose(group_index, premask_shape)
         rank = []
         for rank_in_group in range(group_size):
             # get indices from masked for rank_in_group.
             decomposed_rank_idx = decompose(rank_in_group, masked_shape)
             rank.append(
                 inner_product(decomposed_rank_idx, masked_stride)
-                + inner_product(decomposed_group_idx, unmasked_stride)
+                + inner_product(decomposed_group_idx, premask_stride)
             )
         ranks.append(rank)
     return ranks
@@ -186,3 +189,54 @@ class RankGenerator(object):
                 for i in range(len(rank_group)):
                     rank_group[i] += self.rank_offset
         return ranks
+
+class AdaptedKMeans():
+    def __init__(self, n_clusters=4, even=False, plot=False):
+        self.n_clusters = n_clusters
+        self.even = even
+        self.plot = plot
+    
+    def fit(self, X):
+        kmeans = KMeans(n_clusters=self.n_clusters, random_state=42)
+        kmeans.fit(X)
+
+        if self.even:
+        
+            n_samples = X.shape[0]
+            assert n_samples % self.n_clusters == 0
+            target_size = n_samples // self.n_clusters
+
+            distances = cdist(X, kmeans.cluster_centers_)
+            n_samples = X.shape[0]
+            final_assignments = -np.ones(n_samples, dtype=int)
+            cluster_counts = np.zeros(self.n_clusters, dtype=int)
+
+            while np.any(final_assignments == -1):
+
+                for cluster_idx in range(self.n_clusters):
+                    if cluster_counts[cluster_idx] == target_size:
+                        distances[:, cluster_idx] = np.inf
+
+                valid_samples = np.where(final_assignments == -1)[0]
+                valid_distances = distances[valid_samples]
+                valid_min_distances = np.min(valid_distances, axis=1)
+                sorted_valid_samples = valid_samples[np.argsort(valid_min_distances)]
+
+                for sample_idx in sorted_valid_samples:
+                    closest_cluster_idx = np.argmin(distances[sample_idx])
+                    if cluster_counts[closest_cluster_idx] < target_size:
+                        final_assignments[sample_idx] = closest_cluster_idx
+                        cluster_counts[closest_cluster_idx] += 1
+                    else:
+                        break
+            
+            self.labels_ = final_assignments
+        else:
+            self.labels_ = kmeans.labels_
+
+        if self.plot:
+            plt.figure(figsize=(6, 6))
+            plt.imshow(self.labels_, cmap='tab10')  
+            plt.title(f'KMeans Clusters')
+            plt.colorbar()
+            plt.savefig(f"./results/hidden_states.png")

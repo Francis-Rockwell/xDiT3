@@ -4,6 +4,7 @@ from xfuser.core.long_ctx_attention import xFuserLongContextAttention
 from xfuser.core.cache_manager.cache_manager import get_cache_manager
 from yunchang.ring.utils import RingComm, update_out_and_lse
 from yunchang.ring.ring_flash_attn import RingFlashAttnFunc
+from xfuser.core.distributed import get_runtime_state
 
 
 def xdit_ring_flash_attn_forward(
@@ -42,6 +43,26 @@ def xdit_ring_flash_attn_forward(
     next_k, next_v = None, None
 
     if attn_layer is not None:
+        if get_runtime_state().patch_mode and get_cache_manager().first_mask["attn", attn_layer]:
+            k_cache, v_cache = get_cache_manager().get_kv_cache(layer=attn_layer)
+            k_cache = k_cache.contiguous()
+            v_cache = v_cache.contiguous()
+            k_target_shape = get_runtime_state().get_target_shapes(k_cache, dim=1, token_shape=True, premask_split=True)
+            v_target_shape = get_runtime_state().get_target_shapes(v_cache, dim=1, token_shape=True, premask_split=True)
+            output_kv_cahce = [None]*comm.world_size
+            current_kv_cache = [k_cache, v_cache]
+            for step in range(comm.world_size):
+                if step+1 != comm.world_size:
+                    next_k_cache: torch.Tensor = comm.send_recv(to_send=k_cache, recv_tensor=k_target_shape[(comm.rank-1-step)%comm.world_size])
+                    next_v_cache: torch.Tensor = comm.send_recv(to_send=v_cache, recv_tensor=v_target_shape[(comm.rank-1-step)%comm.world_size])
+                    comm.commit()
+                
+                output_kv_cahce[(comm.rank-step)%comm.world_size] = current_kv_cache
+
+                if step+1 != comm.world_size:
+                    comm.wait()
+                    current_kv_cache = [next_k_cache, next_v_cache]
+            get_cache_manager().sync_cache(full_kv=output_kv_cahce, layer=attn_layer)
         k, v = get_cache_manager().update_and_get_kv_cache(
             new_kv=[k, v],
             layer=attn_layer,
@@ -51,10 +72,21 @@ def xdit_ring_flash_attn_forward(
         k = k.contiguous()
         v = v.contiguous()
 
+    k_target_shape = get_runtime_state().get_target_shapes(k, dim=1, token_shape=True)
+    v_target_shape = get_runtime_state().get_target_shapes(v, dim=1, token_shape=True)
+
     for step in range(comm.world_size):
         if step + 1 != comm.world_size:
-            next_k: torch.Tensor = comm.send_recv(k)
-            next_v: torch.Tensor = comm.send_recv(v)
+            if get_runtime_state().patch_mode:
+                to_send_k = get_runtime_state().masked_kv(k, (comm.rank-step)%comm.world_size)
+                to_recv_k = get_runtime_state().masked_kv(k_target_shape[(comm.rank-1-step)%comm.world_size], (comm.rank-1-step)%comm.world_size)
+                next_k: torch.Tensor = comm.send_recv(to_send=to_send_k, recv_tensor=to_recv_k)
+                to_send_v = get_runtime_state().masked_kv(v, (comm.rank-step)%comm.world_size)
+                to_recv_v = get_runtime_state().masked_kv(v_target_shape[(comm.rank-1-step)%comm.world_size], (comm.rank-1-step)%comm.world_size)
+                next_v: torch.Tensor = comm.send_recv(to_send=to_send_v, recv_tensor=to_recv_v)
+            else:
+                next_k: torch.Tensor = comm.send_recv(to_send=k, recv_tensor=k_target_shape[(comm.rank-1-step)%comm.world_size])
+                next_v: torch.Tensor = comm.send_recv(to_send=v, recv_tensor=v_target_shape[(comm.rank-1-step)%comm.world_size])
             comm.commit()
 
         if joint_strategy == "rear":

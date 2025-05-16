@@ -395,7 +395,7 @@ class xFuserStableDiffusion3Pipeline(xFuserPipelineBaseWrapper):
             else:
                 if is_dp_last_group():
                     image = vae_decode(latents)
-
+        
         if self.is_dp_last_group():
             if output_type == "latent":
                 image = latents
@@ -503,22 +503,7 @@ class xFuserStableDiffusion3Pipeline(xFuserPipelineBaseWrapper):
             and get_sequence_parallel_world_size() > 1
             and is_pipeline_last_stage()
         ):
-            sp_degree = get_sequence_parallel_world_size()
-            sp_latents_list = get_sp_group().all_gather(latents, separate_tensors=True)
-            latents_list = []
-            for pp_patch_idx in range(get_runtime_state().num_pipeline_patch):
-                latents_list += [
-                    sp_latents_list[sp_patch_idx][
-                        :,
-                        :,
-                        get_runtime_state()
-                        .pp_patches_start_idx_local[pp_patch_idx] : get_runtime_state()
-                        .pp_patches_start_idx_local[pp_patch_idx + 1],
-                        :,
-                    ]
-                    for sp_patch_idx in range(sp_degree)
-                ]
-            latents = torch.cat(latents_list, dim=-2)
+            latents = get_runtime_state().sp_latents_all_gather(latents)
 
         return latents
 
@@ -538,17 +523,25 @@ class xFuserStableDiffusion3Pipeline(xFuserPipelineBaseWrapper):
                 if num_pipeline_warmup_steps > 0
                 else latents
             )
-            patch_latents = list(
-                latents.split(get_runtime_state().pp_patches_height, dim=2)
-            )
+            if get_runtime_state().runtime_config.token_mask is None:
+                patch_latents = list(latents.split(get_runtime_state().pp_patches_height, dim=2))
+            else:
+                full_latents = get_runtime_state().sp_latents_all_gather(latents)
+                get_runtime_state().set_token_mask(True)
+                patch_latents = get_runtime_state().masked_latents(full_latents)
         elif is_pipeline_last_stage():
-            patch_latents = list(
-                latents.split(get_runtime_state().pp_patches_height, dim=2)
-            )
+            if get_runtime_state().runtime_config.token_mask is None:
+                patch_latents = list(latents.split(get_runtime_state().pp_patches_height, dim=2))
+            else:
+                full_latents = get_runtime_state().sp_latents_all_gather(latents)
+                get_runtime_state().set_token_mask(True)
+                patch_latents = get_runtime_state().masked_latents(full_latents)
         else:
-            patch_latents = [
-                None for _ in range(get_runtime_state().num_pipeline_patch)
-            ]
+            if get_runtime_state().runtime_config.token_mask is not None:
+                get_runtime_state().set_token_mask(True)
+            patch_latents = [None for _ in range(get_runtime_state().num_pipeline_patch)]
+
+        get_runtime_state().set_kv_mask()
 
         recv_timesteps = (
             num_timesteps - 1 if is_pipeline_first_stage() else num_timesteps
@@ -611,14 +604,8 @@ class xFuserStableDiffusion3Pipeline(xFuserPipelineBaseWrapper):
                         first_async_recv = False
 
                     if not is_pipeline_first_stage() and patch_idx == 0:
-                        last_encoder_hidden_states = (
-                            get_pp_group().get_pipeline_recv_data(
-                                idx=patch_idx, name="encoder_hidden_states"
-                            )
-                        )
-                    patch_latents[patch_idx] = get_pp_group().get_pipeline_recv_data(
-                        idx=patch_idx
-                    )
+                        last_encoder_hidden_states = get_pp_group().get_pipeline_recv_data(idx=patch_idx, name="encoder_hidden_states")
+                    patch_latents[patch_idx] = get_pp_group().get_pipeline_recv_data(idx=patch_idx)
 
                 patch_latents[patch_idx], next_encoder_hidden_states = (
                     self._backbone_forward(
@@ -702,30 +689,17 @@ class xFuserStableDiffusion3Pipeline(xFuserPipelineBaseWrapper):
 
             if XLA_AVAILABLE:
                 xm.mark_step()
+            
+            get_runtime_state().set_kv_mask()
 
         latents = None
         if is_pipeline_last_stage():
             latents = torch.cat(patch_latents, dim=2)
             if get_sequence_parallel_world_size() > 1:
-                sp_degree = get_sequence_parallel_world_size()
-                sp_latents_list = get_sp_group().all_gather(
-                    latents, separate_tensors=True
-                )
-                latents_list = []
-                for pp_patch_idx in range(get_runtime_state().num_pipeline_patch):
-                    latents_list += [
-                        sp_latents_list[sp_patch_idx][
-                            ...,
-                            get_runtime_state()
-                            .pp_patches_start_idx_local[
-                                pp_patch_idx
-                            ] : get_runtime_state()
-                            .pp_patches_start_idx_local[pp_patch_idx + 1],
-                            :,
-                        ]
-                        for sp_patch_idx in range(sp_degree)
-                    ]
-                latents = torch.cat(latents_list, dim=-2)
+                latents = get_runtime_state().sp_latents_all_gather(latents, reshape_masked=True)
+        if get_runtime_state().runtime_config.token_mask:
+            get_runtime_state().set_token_mask(state=False)
+            self.transformer.restore_first_mask_label()
         return latents
 
     def _backbone_forward(

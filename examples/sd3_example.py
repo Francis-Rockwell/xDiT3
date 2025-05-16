@@ -33,6 +33,8 @@ def main():
         f"{'KV'+str(engine_args.kv_max)}_{engine_config.runtime_config.kv_mask}KVMask_{engine_config.runtime_config.token_mask}TokenMask_"
     )
 
+    directory_path = f"./results/SD3/TotalStep{input_config.num_inference_steps}/WarmupStep{engine_config.runtime_config.warmup_steps}/KV{engine_args.kv_max}"
+
     parameter_peak_memory = torch.cuda.max_memory_allocated(device=f"cuda:{local_rank}")
 
     pipe.prepare_run(input_config)
@@ -62,7 +64,6 @@ def main():
                     os.mkdir("results")
                 for i, image in enumerate(output.images):
                     image_rank = dp_group_index * dp_batch_size + i
-                    directory_path = f"./results/SD3/TotalStep{input_config.num_inference_steps}/WarmupStep{engine_config.runtime_config.warmup_steps}"
                     os.makedirs(directory_path, exist_ok=True)
                     image.save(
                         f"{directory_path}/{parallel_info}{image_rank}.png"

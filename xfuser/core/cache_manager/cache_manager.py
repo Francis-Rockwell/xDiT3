@@ -1,7 +1,7 @@
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import torch
 
-from xfuser.core.distributed.runtime_state import runtime_state_is_initialized
+from xfuser.core.distributed.runtime_state import get_runtime_state, runtime_state_is_initialized
 from xfuser.logger import init_logger
 
 logger = init_logger(__name__)
@@ -43,6 +43,7 @@ class CacheManager:
         self,
     ):
         self.cache: Dict[Tuple[str, Any], CacheEntry] = {}
+        self.first_mask: Dict[Tuple[str, Any], bool] = {}
 
     def register_cache_entry(
         self, layer, layer_type: str, cache_type: str = "naive_cache"
@@ -60,6 +61,7 @@ class CacheManager:
                 f"Cache for [layer_type, layer]: [{layer_type}, {layer.__class__}] is already initialized, resetting the cache..."
             )
         self.cache[layer_type, layer] = CacheEntry(cache_type)
+        self.first_mask[layer_type, layer] = True
 
     def update_and_get_kv_cache(
         self,
@@ -168,29 +170,27 @@ class CacheManager:
                 dim=slice_dim,
             )
             self.cache[layer_type, layer].tensors[0] = kv_cache
+        # elif not get_runtime_state().mask_mode:
+        #     pp_patches_token_start_idx_local = get_runtime_state().pp_patches_token_start_idx_local
+        #     pp_patch_idx = get_runtime_state().pipeline_patch_idx
+        #     start_token_idx = ulysses_world_size * pp_patches_token_start_idx_local[pp_patch_idx]
+        #     end_token_idx = ulysses_world_size * pp_patches_token_start_idx_local[pp_patch_idx + 1]
+        #     kv_cache = self.cache[layer_type, layer].tensors[0]
+        #     kv_cache = self._update_kv_in_dim(
+        #         kv_cache=kv_cache,
+        #         new_kv=new_kv,
+        #         dim=slice_dim,
+        #         start_idx=start_token_idx,
+        #         end_idx=end_token_idx,
+        #     )
+        #     self.cache[layer_type, layer].tensors[0] = kv_cache
         else:
-            pp_patches_token_start_idx_local = (
-                get_runtime_state().pp_patches_token_start_idx_local
-            )
+            kv_cache_list = self.cache[layer_type, layer].tensors[0]
+            
             pp_patch_idx = get_runtime_state().pipeline_patch_idx
-            start_token_idx = (
-                ulysses_world_size * pp_patches_token_start_idx_local[pp_patch_idx]
-            )
-            end_token_idx = (
-                ulysses_world_size * pp_patches_token_start_idx_local[pp_patch_idx + 1]
-            )
-            # pp_patches_token_num = get_runtime_state().pp_patches_token_num
-            # start_token_idx = ulysses_world_size * sum(pp_patches_token_num[:get_runtime_state().pipeline_patch_idx])
-            # end_token_idx = ulysses_world_size * sum(pp_patches_token_num[:get_runtime_state().pipeline_patch_idx + 1])
-            kv_cache = self.cache[layer_type, layer].tensors[0]
-            kv_cache = self._update_kv_in_dim(
-                kv_cache=kv_cache,
-                new_kv=new_kv,
-                dim=slice_dim,
-                start_idx=start_token_idx,
-                end_idx=end_token_idx,
-            )
-            self.cache[layer_type, layer].tensors[0] = kv_cache
+            kv_cache_list[pp_patch_idx] = new_kv
+            self.cache[layer_type, layer].tensors[0] = kv_cache_list
+            kv_cache = torch.cat(kv_cache_list, dim=1)
         return kv_cache
 
     def _update_kv_in_dim(
@@ -218,6 +218,25 @@ class CacheManager:
             kv_cache[:, :, :, start_idx:end_idx, ...] = new_kv
         return kv_cache
 
+    def get_kv_cache(self, layer, layer_type: str = "attn"):
+        kv_cache = self.cache[layer_type, layer].tensors[0]
+        return torch.chunk(kv_cache, 2, dim=-1)
+
+    def sync_cache(self, full_kv, layer, layer_type: str = "attn"):
+        full_kv = [torch.cat(kv, dim=-1) for kv in full_kv]
+        kv_list = []
+        for pp_idx in range(get_runtime_state().num_pipeline_patch):
+            for sp_idx in range(get_runtime_state().num_sequence_patch):
+                start = get_runtime_state().premask_sp_patches_start_end_idx_local[sp_idx][pp_idx][0] * get_runtime_state().premask_height_to_token_factor
+                end = get_runtime_state().premask_sp_patches_start_end_idx_local[sp_idx][pp_idx][1] * get_runtime_state().premask_height_to_token_factor
+                kv_list.append(full_kv[sp_idx][:, start:end, ...])
+        kv = torch.cat(kv_list, dim=1)
+        self.first_mask[layer_type, layer] = False
+        masks = get_runtime_state().token_mask_sp_pp_1d[get_runtime_state().sequence_group_idx]
+        self.cache[layer_type, layer].tensors[0] = [kv[:, mask, ...] for mask in masks]
+
+    def restore_first_mask_label(self):
+        self.first_mask = {key: True for key in self.first_mask}
 
 _CACHE_MGR = CacheManager()
 

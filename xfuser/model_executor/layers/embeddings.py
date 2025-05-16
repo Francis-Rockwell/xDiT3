@@ -24,27 +24,13 @@ class xFuserPatchEmbedWrapper(xFuserLayerBaseWrapper):
         self.pos_embed = None
 
     def forward(self, latent):
-        height = (
-            get_runtime_state().input_config.height
-            // get_runtime_state().vae_scale_factor
-        )
-        width = latent.shape[-1]
-        if not get_runtime_state().patch_mode:
-            if getattr(self.module, "pos_embed_max_size", None) is not None:
-                pass
-            else:
-                height, width = (
-                    height // self.module.patch_size,
-                    width // self.module.patch_size,
-                )
+        height = get_runtime_state().latents_height
+        width = get_runtime_state().latents_width
+
+        if getattr(self.module, "pos_embed_max_size", None) is not None:
+            pass
         else:
-            if getattr(self.module, "pos_embed_max_size", None) is not None:
-                pass
-            else:
-                height, width = (
-                    height // self.module.patch_size,
-                    width // self.module.patch_size,
-                )
+            height, width = (height // self.module.patch_size, width // self.module.patch_size)
 
         latent = self.module.proj(latent)
         if self.module.flatten:
@@ -82,21 +68,13 @@ class xFuserPatchEmbedWrapper(xFuserLayerBaseWrapper):
         b, c, h = pos_embed.shape
 
         if get_runtime_state().patch_mode:
-            start, end = get_runtime_state().pp_patches_token_start_end_idx_global[
-                get_runtime_state().pipeline_patch_idx
-            ]
-            pos_embed = pos_embed[
-                :,
-                start:end,
-                :,
-            ]
+                mask = get_runtime_state().token_mask_sp_pp_1d[get_runtime_state().sequence_group_idx][get_runtime_state().pipeline_patch_idx]
+                pos_embed = pos_embed[:, mask, :,]
         else:
             pos_embed_list = [
                 pos_embed[
                     :,
-                    get_runtime_state()
-                    .pp_patches_token_start_end_idx_global[i][0] : get_runtime_state()
-                    .pp_patches_token_start_end_idx_global[i][1],
+                    get_runtime_state().pp_patches_token_start_end_idx_global[i][0] : get_runtime_state().pp_patches_token_start_end_idx_global[i][1],
                     :,
                 ]
                 for i in range(get_runtime_state().num_pipeline_patch)

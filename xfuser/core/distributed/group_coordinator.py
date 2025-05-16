@@ -209,7 +209,7 @@ class GroupCoordinator:
             torch.distributed.all_reduce(input_, group=self.device_group)
         return input_
 
-    def all_gather(
+    def all_gather_same_size(
         self, input_: torch.Tensor, dim: int = 0, separate_tensors: bool = False
     ) -> Union[torch.Tensor, List[torch.Tensor]]:
         world_size = self.world_size
@@ -248,6 +248,55 @@ class GroupCoordinator:
             # Reshape
             output_tensor = output_tensor.reshape(input_size)
             return output_tensor
+    
+    def all_gather_different_size(
+        self, input_: torch.Tensor, dim: int = 0, separate_tensors: bool = False, target_shapes: List[torch.Tensor] = None
+    ) -> Union[torch.Tensor, List[torch.Tensor]]:
+        world_size = self.world_size
+        # Bypass the function if we are using only 1 GPU.
+        if world_size == 1:
+            return input_
+        assert (
+            -input_.dim() <= dim < input_.dim()
+        ), f"Invalid dim ({dim}) for input tensor with shape {input_.size()}"
+        if dim < 0:
+            # Convert negative dim to positive.
+            dim += input_.dim()
+
+        next_tensor = None
+        output_tensor = [None]*self.world_size
+        current_tensor = input_
+        from yunchang.ring.utils import RingComm
+        comm = RingComm(self.device_group)
+        for step in range(comm.world_size):
+            if step+1 != comm.world_size:
+                next_tensor: torch.Tensor = comm.send_recv(
+                    to_send=current_tensor, 
+                    recv_tensor=target_shapes[(self.rank_in_group-1-step)%self.world_size]
+                )
+                comm.commit()
+            
+            output_tensor[(self.rank_in_group-step)%self.world_size] = current_tensor
+
+            if step+1 != comm.world_size:
+                comm.wait()
+                current_tensor = next_tensor
+
+        if dim != 0:
+            output_tensor = output_tensor.movedim(0, dim)
+
+        if separate_tensors:
+            return output_tensor
+        else:
+            raise NotImplementedError
+
+    def all_gather(
+        self, input_: torch.Tensor, dim: int = 0, separate_tensors: bool = False, target_shapes: Union[None, List[torch.Tensor]] = None
+    ) -> Union[torch.Tensor, List[torch.Tensor]]:
+        if target_shapes is None:
+            return self.all_gather_same_size(input_, dim, separate_tensors)
+        else:
+            return self.all_gather_different_size(input_, dim, separate_tensors, target_shapes)
 
     def gather(self, input_: torch.Tensor, dst: int = 0, dim: int = -1) -> torch.Tensor:
         """

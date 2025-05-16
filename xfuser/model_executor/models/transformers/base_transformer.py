@@ -166,15 +166,10 @@ class xFuserTransformerBaseWrapper(xFuserModelBaseWrapper, metaclass=ABCMeta):
     def _get_patch_height_width(self) -> Tuple[int, int]:
         patch_size = get_runtime_state().backbone_patch_size
         vae_scale_factor = get_runtime_state().vae_scale_factor
-        width = get_runtime_state().input_config.width // patch_size // vae_scale_factor
+        width = 1 if get_runtime_state().patch_mode else get_runtime_state().token_width
 
         if get_runtime_state().patch_mode:
-            height = (
-                get_runtime_state().pp_patches_height[
-                    get_runtime_state().pipeline_patch_idx
-                ]
-                // patch_size
-            )
+            height = get_runtime_state().pp_patches_height[get_runtime_state().pipeline_patch_idx] // patch_size
         else:
             height = sum(get_runtime_state().pp_patches_height) // patch_size
         return height, width

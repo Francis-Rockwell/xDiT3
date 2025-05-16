@@ -157,6 +157,8 @@ class xFuserSD3Transformer2DWrapper(xFuserTransformerBaseWrapper):
         if is_pipeline_last_stage():
             #! ---------------------------------------- ADD ABOVE ----------------------------------------
             hidden_states = self.norm_out(hidden_states, temb)
+            if not get_runtime_state().patch_mode:
+                get_runtime_state().premask_hidden_state = hidden_states[0]
             hidden_states = self.proj_out(hidden_states)
 
             # unpatchify

@@ -135,3 +135,5 @@ class xFuserModelBaseWrapper(nn.Module, xFuserBaseWrapper, metaclass=ABCMeta):
                         layer_type="attn",
                         cache_type="sequence_parallel_attn_cache",
                     )
+    def restore_first_mask_label(self):
+        get_cache_manager().restore_first_mask_label()

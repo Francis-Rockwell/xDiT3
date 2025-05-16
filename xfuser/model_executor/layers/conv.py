@@ -64,6 +64,7 @@ class xFuserConv2dWrapper(xFuserLayerBaseWrapper):
         return result
 
     def forward(self, x: torch.Tensor, *args, **kwargs) -> torch.Tensor:
+        return self.naive_forward(x)
         if (
             (
                 get_pipeline_parallel_world_size() == 1
