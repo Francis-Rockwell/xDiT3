@@ -13,3 +13,4 @@ latte_output.mp4
 cache/
 benchmark/fid/dataset/
 latency/
+*.md

@@ -1,6 +1,8 @@
 import argparse
 import logging
-import time
+import random
+import numpy as np
+import torch
 from cleanfid import fid
 from pathlib import Path
 
@@ -14,6 +16,13 @@ def setup_logging():
             logging.FileHandler('fid_computation.log')
         ]
     )
+
+def set_random_seed(seed=42):
+    """Set random seed for reproducibility"""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # If using GPU
 
 def compute_fid_score(ref_path: str, sample_path: str, device: str = "cuda") -> float:
     """
@@ -39,23 +48,18 @@ def compute_fid_score(ref_path: str, sample_path: str, device: str = "cuda") -> 
     if not gen_dir.exists():
         raise ValueError(f"sample images directory does not exist: {sample_path}")
     
-    logging.info(f"Starting FID score computation")
     logging.info(f"ref images directory: {ref_path}")
     logging.info(f"sample images directory: {sample_path}")
-    logging.info(f"Using device: {device}")
-    
-    start_time = time.time()
     
     try:
         score = fid.compute_fid(
             ref_path,
             sample_path,
             device=device,
-            num_workers=8  # Can be adjusted as needed
+            batch_size=1,
+            num_workers=1
         )
-        
-        elapsed_time = time.time() - start_time
-        logging.info(f"FID computation completed, time elapsed: {elapsed_time:.2f} seconds")
+
         return score
         
     except Exception as e:
@@ -63,6 +67,8 @@ def compute_fid_score(ref_path: str, sample_path: str, device: str = "cuda") -> 
         raise
 
 def main():
+    set_random_seed()
+
     # Setup command line arguments
     parser = argparse.ArgumentParser(description='Compute FID score')
     parser.add_argument('--ref', type=str, required=True,

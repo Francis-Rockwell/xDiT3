@@ -43,6 +43,7 @@ def main():
     if engine_config.parallel_config.pp_degree == 1 and engine_config.parallel_config.sp_degree == 1:
         folder_path += "/original"
     else:
+        folder_path += f"/WarmupStep{engine_config.runtime_config.warmup_steps}"
         folder_path += ("/KV" + str(engine_args.kv_max))
         folder_path += f"/{engine_config.runtime_config.kv_mask}KVMask"
         folder_path += f"/{engine_config.runtime_config.token_mask}TokenMask"

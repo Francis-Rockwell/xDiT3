@@ -10,19 +10,19 @@ export MODEL_ID="/archive/share/cql/model/stable-diffusion-3-medium-diffusers"
 # export MODEL_ID="/archive/share/cql/model/FLUX.1-dev"
 
 export INFERENCE_STEP="--num_inference_steps 20"
-export WARMUP_STEP="--warmup_step 4"
 INFERENCE_NUM=$(echo $INFERENCE_STEP | grep -o '[0-9]\+')
-WARMUP_NUM=$(echo $WARMUP_STEP | grep -o '[0-9]\+')
 SAMPLE_NUM=$(echo $NUM_SAMPLE | grep -o '[0-9]\+')
-export SAMPLE_IMAGES_FOLDER="--sample_images_folder ${DATASET_PATH}Sample${SAMPLE_NUM}/TotalStep${INFERENCE_NUM}/WarmupStep${WARMUP_NUM}/"
+export SAMPLE_IMAGES_FOLDER="--sample_images_folder ${DATASET_PATH}Sample${SAMPLE_NUM}/TotalStep${INFERENCE_NUM}"
 
 export N_GPUS=1
 export PARALLEL_ARGS="--pipefusion_parallel_degree 1 --ulysses_degree 1 --ring_degree 1"
+export WARMUP_STEP="--warmup_step 20"
 echo "Running baseline"
 bash ./benchmark/fid/generate.sh
 
 export N_GPUS=4
 export PARALLEL_ARGS="--pipefusion_parallel_degree 2 --ulysses_degree 1 --ring_degree 2"
+export WARMUP_STEP="--warmup_step 4"
 TOKEN_MASK_OPTIONS=("Height" "Random" "EvenCluster" "UnevenCluster")
 KV_MASK_OPTIONS=("Fixed" "Random" "MaxCosine" "MinCosine")
 KV_MAX_OPTIONS=(64 56 48 40 32)

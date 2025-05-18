@@ -4,8 +4,8 @@ DATASET_PATH="./benchmark/fid/dataset/COCO/"
 INFERENCE_NUM=20
 WARMUP_NUM=4
 SAMPLE_NUM=2000
-SAMPLE_IMAGES_FOLDER="${DATASET_PATH}Sample${SAMPLE_NUM}/TotalStep${INFERENCE_NUM}/WarmupStep${WARMUP_NUM}/"
-REF_DIR="${SAMPLE_IMAGES_FOLDER}original"
+SAMPLE_IMAGES_FOLDER="${DATASET_PATH}Sample${SAMPLE_NUM}/TotalStep${INFERENCE_NUM}"
+REF_DIR="${SAMPLE_IMAGES_FOLDER}/original"
 
 
 TOKEN_MASK_OPTIONS=("Height" "Random" "EvenCluster" "UnevenCluster")
@@ -17,7 +17,7 @@ KV_MAX_OPTIONS=(64 56 48 40 32)
 for token_mask in "${TOKEN_MASK_OPTIONS[@]}"; do
     for kv_mask in "${KV_MASK_OPTIONS[@]}"; do
         for kv_max in "${KV_MAX_OPTIONS[@]}"; do
-            SAMPLE_DIR="${SAMPLE_IMAGES_FOLDER}KV${kv_max}/${kv_mask}KVMask/${token_mask}TokenMask/"
+            SAMPLE_DIR="${SAMPLE_IMAGES_FOLDER}/WarmupStep${WARMUP_NUM}/KV${kv_max}/${kv_mask}KVMask/${token_mask}TokenMask/"
             python ./benchmark/fid/compute_fid.py \
                 --ref $REF_DIR \
                 --sample $SAMPLE_DIR \
